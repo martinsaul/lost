@@ -10,7 +10,7 @@ share them).
   QR image** (vector SVG for any print size, plus PNG for thermal printers).
 - Public `/{base}/found/<guid>` page with a contact form that never reveals the
   owner — or optionally shows opted-in email/phone for faster recovery.
-- **Pluggable mail delivery**: plain SMTP, [Posterboy](https://github.com/), the
+- **Pluggable mail delivery**: plain SMTP, [Posterboy](https://github.com/martinsaul/posterboy), the
   Gmail API, or Amazon SQS.
 - Single static Go binary with an embedded React SPA. **SQLite or Postgres.**
 - Fully domain-configurable — run your own instance under any domain.
