@@ -1,0 +1,22 @@
+# Secrets & local data
+.env
+/data/
+/pgdata/
+
+# Build artifacts
+/lost
+/tmp/
+*.db
+*.db-wal
+*.db-shm
+
+# Node / Vite
+web/node_modules/
+web/dist/assets/
+# Keep a placeholder so `go:embed all:web/dist` builds before the SPA is built.
+!web/dist/
+web/dist/*
+!web/dist/.gitkeep
+
+# Go
+*.test

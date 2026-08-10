@@ -1,0 +1,39 @@
+# Runs with a single-file SQLite database and no external dependencies by default.
+#
+#   docker compose up -d                      # SQLite (default)
+#   docker compose --profile postgres up -d   # Postgres instead
+#
+# Secrets come from a local .env (see .env.example) and are never committed.
+# Put a TLS-terminating reverse proxy in front of the published port 8080.
+
+services:
+  lost:
+    build: .
+    image: lost:latest
+    container_name: lost
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Public origin — drives QR content and sign-in links.
+      LOST_BASE_URL: ${LOST_BASE_URL:-http://localhost:8080}
+      LOST_ADDR: ":8080"
+      # SQLite by default; set LOST_DB_URL in .env to a postgres:// URL to switch.
+      LOST_DB_URL: ${LOST_DB_URL:-sqlite:///data/lost.db}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+
+  # Optional Postgres. Enable with: docker compose --profile postgres up -d
+  # and set LOST_DB_URL=postgres://lost:lost@postgres:5432/lost?sslmode=disable
+  postgres:
+    image: postgres:17-alpine
+    container_name: lost-postgres
+    profiles: ["postgres"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lost}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lost}
+      POSTGRES_DB: ${POSTGRES_DB:-lost}
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data

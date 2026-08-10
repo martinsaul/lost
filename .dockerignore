@@ -1,0 +1,11 @@
+.git
+.gitignore
+*.md
+web/node_modules
+web/dist/assets
+data
+pgdata
+.env
+*.db
+*.db-wal
+*.db-shm

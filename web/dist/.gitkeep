@@ -1,0 +1,2 @@
+# Keeps web/dist present so `//go:embed all:web/dist` compiles before the SPA is
+# built. `npm --prefix web run build` populates this directory.
