@@ -6,6 +6,7 @@ import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import TagDetail from './pages/TagDetail.jsx'
 import Found from './pages/Found.jsx'
+import AdminPage from './pages/AdminPage.jsx'
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -14,6 +15,7 @@ createRoot(document.getElementById('root')).render(
         <Route path="/" element={<Login />} />
         <Route path="/app" element={<Dashboard />} />
         <Route path="/app/tags/:guid" element={<TagDetail />} />
+        <Route path="/app/admin" element={<AdminPage />} />
         <Route path="/found/:guid" element={<Found />} />
       </Routes>
     </BrowserRouter>

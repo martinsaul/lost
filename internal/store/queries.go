@@ -3,10 +3,14 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// ErrUserCap is returned when creating a new user would exceed the configured cap.
+var ErrUserCap = errors.New("user registration cap reached")
 
 func newID() string { return uuid.NewString() }
 
@@ -32,6 +36,53 @@ func (s *Store) UpsertUser(email string) (*User, error) {
 		return nil, err
 	}
 	return u, nil
+}
+
+// CountUsers returns the total number of registered users.
+func (s *Store) CountUsers() (int, error) {
+	var n int
+	err := s.db.Get(&n, `SELECT COUNT(*) FROM users`)
+	return n, err
+}
+
+// UpsertUserWithCap returns the existing user for email, or creates one — unless
+// creating a NEW user would exceed maxUsers (0 = unlimited), in which case it
+// returns ErrUserCap. Existing users are always allowed to sign in.
+func (s *Store) UpsertUserWithCap(email string, maxUsers int) (*User, error) {
+	if u, err := s.UserByEmail(email); err == nil {
+		return u, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	if maxUsers > 0 {
+		n, err := s.CountUsers()
+		if err != nil {
+			return nil, err
+		}
+		if n >= maxUsers {
+			return nil, ErrUserCap
+		}
+	}
+	return s.UpsertUser(email)
+}
+
+// ListUsersWithStats returns every user with their tag and found-report counts,
+// newest first (admin panel).
+func (s *Store) ListUsersWithStats() ([]UserStat, error) {
+	var rows []UserStat
+	err := s.db.Select(&rows, `
+		SELECT u.email AS email, u.created_at AS created_at,
+		  (SELECT COUNT(*) FROM tags t WHERE t.user_id = u.id) AS tag_count,
+		  (SELECT COUNT(*) FROM found_reports r JOIN tags t2 ON r.tag_id = t2.id WHERE t2.user_id = u.id) AS report_count
+		FROM users u
+		ORDER BY u.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		rows[i].CreatedAt = parseTime(rows[i].CreatedRaw)
+	}
+	return rows, nil
 }
 
 func (s *Store) UserByEmail(email string) (*User, error) {
@@ -240,8 +291,65 @@ func (s *Store) CreateFoundReport(r *FoundReport) error {
 	r.ID = newID()
 	r.CreatedAt = time.Now().UTC()
 	_, err := s.db.Exec(s.rebind(
-		`INSERT INTO found_reports (id, tag_id, finder_name, finder_email, finder_phone, message, remote_ip, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
-		r.ID, r.TagID, r.FinderName, r.FinderEmail, r.FinderPhone, r.Message, r.RemoteIP, nowStr())
+		`INSERT INTO found_reports (id, tag_id, finder_name, finder_email, finder_phone, message,
+			remote_ip, user_agent, finder_key, has_geo, geo_country, geo_region, geo_city, geo_lat, geo_lon,
+			has_precise, precise_lat, precise_lon, precise_accuracy, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		r.ID, r.TagID, r.FinderName, r.FinderEmail, r.FinderPhone, r.Message,
+		r.RemoteIP, r.UserAgent, r.FinderKey, b2i(r.HasGeo), r.GeoCountry, r.GeoRegion, r.GeoCity, r.GeoLat, r.GeoLon,
+		b2i(r.HasPrecise), r.PreciseLat, r.PreciseLon, r.PreciseAccuracy, nowStr())
 	return err
+}
+
+// FinderReportStats returns, for a tag and a given finder (matched by finderKey
+// when non-empty, otherwise by IP), the most recent submission time and the count
+// within [since, now]. Backs the re-report throttle.
+func (s *Store) FinderReportStats(tagID, finderKey, ip string, since time.Time) (last time.Time, count int, err error) {
+	sinceStr := since.UTC().Format(time.RFC3339Nano)
+	var rows []string
+	if strings.TrimSpace(finderKey) != "" {
+		err = s.db.Select(&rows, s.rebind(
+			`SELECT created_at FROM found_reports
+			 WHERE tag_id = ? AND created_at >= ? AND (finder_key = ? OR remote_ip = ?)
+			 ORDER BY created_at DESC`), tagID, sinceStr, finderKey, ip)
+	} else {
+		err = s.db.Select(&rows, s.rebind(
+			`SELECT created_at FROM found_reports
+			 WHERE tag_id = ? AND created_at >= ? AND remote_ip = ?
+			 ORDER BY created_at DESC`), tagID, sinceStr, ip)
+	}
+	if err != nil {
+		return
+	}
+	count = len(rows)
+	if count > 0 {
+		last = parseTime(rows[0])
+	}
+	return
+}
+
+// ---- Scan events ----
+
+func (s *Store) CreateScanEvent(e *ScanEvent) error {
+	e.ID = newID()
+	e.CreatedAt = time.Now().UTC()
+	_, err := s.db.Exec(s.rebind(
+		`INSERT INTO scan_events (id, tag_id, remote_ip, user_agent, has_geo, geo_country, geo_region, geo_city, geo_lat, geo_lon, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		e.ID, e.TagID, e.RemoteIP, e.UserAgent, b2i(e.HasGeo), e.GeoCountry, e.GeoRegion, e.GeoCity, e.GeoLat, e.GeoLon, nowStr())
+	return err
+}
+
+// CountScanEvents returns the total number of recorded scans.
+func (s *Store) CountScanEvents() (int, error) {
+	var n int
+	err := s.db.Get(&n, `SELECT COUNT(*) FROM scan_events`)
+	return n, err
+}
+
+// CountFoundReports returns the total number of found reports.
+func (s *Store) CountFoundReports() (int, error) {
+	var n int
+	err := s.db.Get(&n, `SELECT COUNT(*) FROM found_reports`)
+	return n, err
 }

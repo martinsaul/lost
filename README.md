@@ -80,7 +80,26 @@ list. Highlights:
 | `LOST_DB_URL` | `sqlite://<path>` or `postgres://…`. |
 | `LOST_NOTIFIER` | `smtp` \| `posterboy` \| `gmail-api` \| `sqs`. |
 | `LOST_FROM_ADDRESS`, `LOST_FROM_NAME` | Outbound mail identity. |
+| `LOST_MAX_USERS` | Cap total registered users (`0` = unlimited). |
+| `LOST_ADMIN_EMAILS` | Comma-separated admin emails (unlock `/app/admin`). |
+| `LOST_GEO_PROVIDER` | `none` \| `ipapi` \| `maxmind` — IP geolocation on scans/reports. |
+| `LOST_GEOIP_DB` | Path to a GeoLite2 City `.mmdb` (for `maxmind`). |
+| `LOST_FINDER_MIN_INTERVAL` / `LOST_FINDER_DAILY_CAP` | Finder re-report throttle (default `2h` / `6`). |
 | `LOST_TURNSTILE_SITE_KEY` / `_SECRET` | Optional Cloudflare Turnstile on the form. |
+
+### Admin, limits & scan metadata
+
+- **User cap** — `LOST_MAX_USERS` limits registrations; new sign-ups past the cap
+  are refused (existing users unaffected).
+- **Admin panel** — users whose email is in `LOST_ADMIN_EMAILS` get an **Admin**
+  view (`/app/admin`) listing registered users with tag/report counts and usage.
+- **Finder re-reports** — after messaging an owner, a finder can send an update;
+  throttled to one per `LOST_FINDER_MIN_INTERVAL` and `LOST_FINDER_DAILY_CAP` per
+  day (tracked by a cookie, with IP fallback).
+- **Scan metadata** — each scan records the connection IP and (if a geo provider
+  is configured) an approximate IP-based location. Finders may also **opt in** to
+  share their device's precise location, which enriches the owner's notification
+  with a map link. Nothing precise is collected without explicit consent.
 
 ### Notifiers
 

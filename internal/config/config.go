@@ -30,6 +30,18 @@ type Config struct {
 	// Optional bot deterrent on the public form
 	TurnstileSiteKey string
 	TurnstileSecret  string
+
+	// Registration cap (0 = unlimited) and admin allowlist.
+	MaxUsers    int
+	AdminEmails []string // lower-cased
+
+	// IP geolocation on QR scans / found reports.
+	GeoProvider string // none | ipapi | maxmind
+	GeoIPDB     string // path to a MaxMind GeoLite2 City .mmdb (provider=maxmind)
+
+	// Finder re-report throttle (a finder updating their message).
+	FinderMinInterval time.Duration // minimum gap between a finder's submissions
+	FinderDailyCap    int           // max submissions per finder per rolling 24h
 }
 
 type SMTPConfig struct {
@@ -100,6 +112,15 @@ func Load() (*Config, error) {
 		},
 		TurnstileSiteKey: os.Getenv("LOST_TURNSTILE_SITE_KEY"),
 		TurnstileSecret:  os.Getenv("LOST_TURNSTILE_SECRET"),
+
+		MaxUsers:    envInt("LOST_MAX_USERS", 0),
+		AdminEmails: envEmailList("LOST_ADMIN_EMAILS"),
+
+		GeoProvider: strings.ToLower(env("LOST_GEO_PROVIDER", "none")),
+		GeoIPDB:     os.Getenv("LOST_GEOIP_DB"),
+
+		FinderMinInterval: envDuration("LOST_FINDER_MIN_INTERVAL", 2*time.Hour),
+		FinderDailyCap:    envInt("LOST_FINDER_DAILY_CAP", 6),
 	}
 
 	if c.SessionSecret == "" {
@@ -112,6 +133,32 @@ func Load() (*Config, error) {
 // TurnstileEnabled reports whether CAPTCHA verification should run.
 func (c *Config) TurnstileEnabled() bool {
 	return c.TurnstileSiteKey != "" && c.TurnstileSecret != ""
+}
+
+// IsAdmin reports whether email is on the admin allowlist.
+func (c *Config) IsAdmin(email string) bool {
+	e := strings.ToLower(strings.TrimSpace(email))
+	for _, a := range c.AdminEmails {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
+
+// envEmailList parses a comma-separated env var into a lower-cased slice.
+func envEmailList(k string) []string {
+	raw := os.Getenv(k)
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if v := strings.ToLower(strings.TrimSpace(p)); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func env(k, def string) string {

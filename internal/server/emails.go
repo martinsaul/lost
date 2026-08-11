@@ -52,18 +52,21 @@ func (s *Server) foundReportMessage(owner *store.User, tag *store.Tag, r *store.
 		contactStr = "(the finder left no contact details)\n"
 	}
 
+	locText, locHTML := scanMetadata(r)
+
 	text := fmt.Sprintf(
-		"Someone found \"%s\"!\n\nThey left this message:\n\n%s\n\nHow to reach them:\n%s\n",
-		tagName, r.Message, contactStr)
+		"Someone found \"%s\"!\n\nThey left this message:\n\n%s\n\nHow to reach them:\n%s\n%s",
+		tagName, r.Message, contactStr, locText)
 
 	replyTo := r.FinderEmail // lets the owner reply straight to the finder
 
 	body := fmt.Sprintf(`<p>Someone scanned the QR code on <strong>%s</strong> and reached out.</p>
 <blockquote style="margin:12px 0;padding:10px 14px;border-left:3px solid #ddd;color:#333">%s</blockquote>
-<p><strong>How to reach them:</strong><br>%s</p>`,
+<p><strong>How to reach them:</strong><br>%s</p>%s`,
 		html.EscapeString(tagName),
 		html.EscapeString(r.Message),
-		strings.ReplaceAll(html.EscapeString(contactStr), "\n", "<br>"))
+		strings.ReplaceAll(html.EscapeString(contactStr), "\n", "<br>"),
+		locHTML)
 
 	return notify.Message{
 		To:       owner.Email,
@@ -74,6 +77,58 @@ func (s *Server) foundReportMessage(owner *store.User, tag *store.Tag, r *store.
 		Text:     text,
 		HTML:     htmlWrap(body),
 	}
+}
+
+// scanMetadata renders the connection/location details attached to a report,
+// for the owner-only notification email (plain text + an HTML block).
+func scanMetadata(r *store.FoundReport) (text, htmlBlock string) {
+	var t strings.Builder
+	var h strings.Builder
+	t.WriteString("\nWhere it was scanned:\n")
+	h.WriteString(`<p style="margin-top:16px"><strong>Where it was scanned</strong></p><ul style="color:#333;font-size:14px">`)
+
+	if r.RemoteIP != "" {
+		fmt.Fprintf(&t, "- IP address: %s\n", r.RemoteIP)
+		fmt.Fprintf(&h, "<li>IP address: %s</li>", html.EscapeString(r.RemoteIP))
+	}
+	if r.HasGeo {
+		place := joinNonEmpty([]string{r.GeoCity, r.GeoRegion, r.GeoCountry}, ", ")
+		maps := mapsLink(r.GeoLat, r.GeoLon)
+		switch {
+		case place != "":
+			fmt.Fprintf(&t, "- Approx. location (from IP): %s  %s\n", place, maps)
+			fmt.Fprintf(&h, `<li>Approx. location (from IP): %s — <a href="%s">map</a></li>`, html.EscapeString(place), maps)
+		case r.GeoLat != 0 || r.GeoLon != 0:
+			fmt.Fprintf(&t, "- Approx. location (from IP): %s\n", maps)
+			fmt.Fprintf(&h, `<li>Approx. location (from IP): <a href="%s">map</a></li>`, maps)
+		}
+	}
+	if r.HasPrecise {
+		maps := mapsLink(r.PreciseLat, r.PreciseLon)
+		acc := ""
+		if r.PreciseAccuracy > 0 {
+			acc = fmt.Sprintf(" (±%dm)", int(r.PreciseAccuracy))
+		}
+		fmt.Fprintf(&t, "- Precise location (finder shared): %.5f, %.5f%s  %s\n", r.PreciseLat, r.PreciseLon, acc, maps)
+		fmt.Fprintf(&h, `<li><strong>Precise location (finder shared)</strong>: %.5f, %.5f%s — <a href="%s">map</a></li>`,
+			r.PreciseLat, r.PreciseLon, html.EscapeString(acc), maps)
+	}
+	h.WriteString("</ul>")
+	return t.String(), h.String()
+}
+
+func mapsLink(lat, lon float64) string {
+	return fmt.Sprintf("https://www.google.com/maps?q=%.6f,%.6f", lat, lon)
+}
+
+func joinNonEmpty(parts []string, sep string) string {
+	var out []string
+	for _, p := range parts {
+		if strings.TrimSpace(p) != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, sep)
 }
 
 func (s *Server) appName() string { return s.cfg.FromName }

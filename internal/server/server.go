@@ -4,9 +4,11 @@ package server
 
 import (
 	"io/fs"
+	"log"
 	"net/http"
 
 	"github.com/martinsaul/lost/internal/config"
+	"github.com/martinsaul/lost/internal/geo"
 	"github.com/martinsaul/lost/internal/notify"
 	"github.com/martinsaul/lost/internal/store"
 )
@@ -15,6 +17,7 @@ type Server struct {
 	cfg      *config.Config
 	store    *store.Store
 	notifier notify.Notifier
+	geo      geo.Provider
 	spa      fs.FS
 	mux      *http.ServeMux
 
@@ -25,10 +28,18 @@ type Server struct {
 // New builds the server. spa is the built React app (embedded dist) served for
 // all non-API routes.
 func New(cfg *config.Config, st *store.Store, n notify.Notifier, spa fs.FS) *Server {
+	gp, err := geo.New(cfg.GeoProvider, cfg.GeoIPDB)
+	if err != nil {
+		log.Printf("geo: %v; geolocation disabled", err)
+		gp, _ = geo.New("none", "")
+	} else if cfg.GeoProvider != "" && cfg.GeoProvider != "none" {
+		log.Printf("geo provider: %s", cfg.GeoProvider)
+	}
 	s := &Server{
 		cfg:          cfg,
 		store:        st,
 		notifier:     n,
+		geo:          gp,
 		spa:          spa,
 		mux:          http.NewServeMux(),
 		foundLimiter: newRateLimiter(0.2, 5), // ~1 per 5s, burst 5, per IP+tag
@@ -62,6 +73,10 @@ func (s *Server) routes() {
 	// --- Public found page ---
 	s.mux.HandleFunc("GET /api/found/{guid}", s.handleGetFound)
 	s.mux.HandleFunc("POST /api/found/{guid}", s.handleSubmitFound)
+
+	// --- Admin (auth + allowlisted email required) ---
+	s.mux.HandleFunc("GET /api/admin/users", s.requireAdmin(s.handleAdminUsers))
+	s.mux.HandleFunc("GET /api/admin/stats", s.requireAdmin(s.handleAdminStats))
 
 	// --- Public runtime config for the SPA (e.g. Turnstile site key) ---
 	s.mux.HandleFunc("GET /api/config", s.handlePublicConfig)

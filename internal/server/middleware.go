@@ -7,10 +7,15 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/martinsaul/lost/internal/auth"
 	"github.com/martinsaul/lost/internal/store"
 )
+
+// finderCookieName carries an opaque per-finder id used to throttle re-reports
+// even when a finder is behind a shared IP.
+const finderCookieName = "lost_finder"
 
 type ctxKey int
 
@@ -44,6 +49,55 @@ func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
 		}
 		h(w, r)
 	}
+}
+
+// requireAdmin wraps a handler, returning 401 when unauthenticated and 403 when
+// the signed-in user's email is not on the admin allowlist.
+func (s *Server) requireAdmin(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u := currentUser(r)
+		if u == nil {
+			writeErr(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if !s.cfg.IsAdmin(u.Email) {
+			writeErr(w, http.StatusForbidden, "admin access required")
+			return
+		}
+		h(w, r)
+	}
+}
+
+// finderKeyOrSet returns the finder's opaque id from the cookie, minting and
+// setting one when absent.
+func (s *Server) finderKeyOrSet(w http.ResponseWriter, r *http.Request) string {
+	if c, err := r.Cookie(finderCookieName); err == nil && c.Value != "" {
+		return c.Value
+	}
+	id := auth.NewSessionID()
+	http.SetCookie(w, &http.Cookie{
+		Name:     finderCookieName,
+		Value:    id,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.secureCookies(),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int((30 * 24 * time.Hour) / time.Second),
+	})
+	return id
+}
+
+// readFinderKey returns the finder cookie value, or "" if absent.
+func readFinderKey(r *http.Request) string {
+	if c, err := r.Cookie(finderCookieName); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+// userAgent returns a length-bounded User-Agent header.
+func userAgent(r *http.Request) string {
+	return trimTo(r.Header.Get("User-Agent"), 400)
 }
 
 // ---- JSON helpers ----

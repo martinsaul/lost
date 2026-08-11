@@ -65,7 +65,48 @@ type FoundReport struct {
 	FinderPhone string
 	Message     string
 	RemoteIP    string
+	UserAgent   string
+	FinderKey   string // opaque per-finder id (cookie), for re-report throttling
 	CreatedAt   time.Time
+
+	// IP-derived approximate location.
+	HasGeo    bool
+	GeoCountry string
+	GeoRegion  string
+	GeoCity    string
+	GeoLat     float64
+	GeoLon     float64
+
+	// Precise location, only when the finder explicitly consented (browser geolocation).
+	HasPrecise      bool
+	PreciseLat      float64
+	PreciseLon      float64
+	PreciseAccuracy float64 // meters
+}
+
+// ScanEvent records a QR scan (a load of the public /found/<guid> page) with the
+// connection metadata, for owner/admin analytics.
+type ScanEvent struct {
+	ID         string
+	TagID      string
+	RemoteIP   string
+	UserAgent  string
+	HasGeo     bool
+	GeoCountry string
+	GeoRegion  string
+	GeoCity    string
+	GeoLat     float64
+	GeoLon     float64
+	CreatedAt  time.Time
+}
+
+// UserStat is an admin-panel row: a user plus activity counts.
+type UserStat struct {
+	Email       string    `db:"email"`
+	CreatedAt   time.Time `db:"-"`
+	CreatedRaw  string    `db:"created_at"`
+	TagCount    int       `db:"tag_count"`
+	ReportCount int       `db:"report_count"`
 }
 
 // Open resolves the DSN, opens the pool, and applies migrations.

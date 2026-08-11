@@ -48,6 +48,7 @@ export default function Dashboard() {
         <div className="brand">Lost &amp; Found</div>
         <div className="row">
           <span className="tiny">{me && me.email}</span>
+          {me && me.isAdmin && <Link to="/app/admin"><button className="secondary">Admin</button></Link>}
           <button className="secondary" onClick={logout}>Sign out</button>
         </div>
       </header>

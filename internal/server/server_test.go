@@ -56,7 +56,7 @@ func (c *capturingNotifier) waitFor(t *testing.T, n int) {
 
 var tokenRe = regexp.MustCompile(`token=([A-Za-z0-9_\-]+)`)
 
-func newTestServer(t *testing.T) (*httptest.Server, *capturingNotifier) {
+func newTestServer(t *testing.T, mutators ...func(*config.Config)) (*httptest.Server, *capturingNotifier) {
 	t.Helper()
 	st, err := store.Open("sqlite://:memory:")
 	if err != nil {
@@ -74,11 +74,143 @@ func newTestServer(t *testing.T) (*httptest.Server, *capturingNotifier) {
 		SessionTTL:    24 * 60 * 60 * 1e9,
 		Notifier:      "capture",
 	}
+	for _, m := range mutators {
+		m(cfg)
+	}
 	spa := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html></html>")}}
 	srv := New(cfg, st, cn, spa)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, cn
+}
+
+// signIn runs the magic-link flow and returns an authenticated client (cookie jar).
+func signIn(t *testing.T, ts *httptest.Server, cn *capturingNotifier, email string) *http.Client {
+	t.Helper()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	before := len(cn.msgs)
+	postJSON(t, client, ts.URL+"/api/auth/request", `{"email":"`+email+`"}`)
+	cn.waitFor(t, before+1)
+	login, _ := cn.last()
+	m := tokenRe.FindStringSubmatch(login.Text + login.HTML)
+	if m == nil {
+		t.Fatalf("no token in login email for %s", email)
+	}
+	resp, err := client.Get(ts.URL + "/api/auth/verify?token=" + m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return client
+}
+
+func TestUserCap(t *testing.T) {
+	ts, cn := newTestServer(t, func(c *config.Config) { c.MaxUsers = 1 })
+
+	// First user registers fine.
+	c1 := signIn(t, ts, cn, "a@example.test")
+	var me struct{ Email string }
+	getJSON(t, c1, ts.URL+"/api/me", &me)
+	if me.Email != "a@example.test" {
+		t.Fatalf("me %q", me.Email)
+	}
+
+	// A second, new user is blocked at verify (redirect carries the error, no session).
+	jar, _ := cookiejar.New(nil)
+	c2 := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	before := len(cn.msgs)
+	postJSON(t, c2, ts.URL+"/api/auth/request", `{"email":"b@example.test"}`)
+	cn.waitFor(t, before+1)
+	login, _ := cn.last()
+	m := tokenRe.FindStringSubmatch(login.Text + login.HTML)
+	resp, _ := c2.Get(ts.URL + "/api/auth/verify?token=" + m[1])
+	resp.Body.Close()
+	if !strings.Contains(resp.Header.Get("Location"), "registration") {
+		t.Fatalf("capped user should be rejected, got location %q", resp.Header.Get("Location"))
+	}
+	r2, _ := c2.Get(ts.URL + "/api/me")
+	if r2.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("capped user should have no session, got %d", r2.StatusCode)
+	}
+	r2.Body.Close()
+
+	// The existing user can still sign in.
+	_ = signIn(t, ts, cn, "a@example.test")
+}
+
+func TestAdmin(t *testing.T) {
+	ts, cn := newTestServer(t, func(c *config.Config) { c.AdminEmails = []string{"boss@example.test"} })
+
+	// A normal user is not admin and is forbidden from admin endpoints.
+	u := signIn(t, ts, cn, "user@example.test")
+	var me struct {
+		IsAdmin bool `json:"isAdmin"`
+	}
+	getJSON(t, u, ts.URL+"/api/me", &me)
+	if me.IsAdmin {
+		t.Fatal("normal user should not be admin")
+	}
+	resp, _ := u.Get(ts.URL + "/api/admin/users")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-admin /api/admin/users = %d, want 403", resp.StatusCode)
+	}
+
+	// The allowlisted user is admin and can list users + read stats.
+	a := signIn(t, ts, cn, "boss@example.test")
+	getJSON(t, a, ts.URL+"/api/me", &me)
+	if !me.IsAdmin {
+		t.Fatal("boss should be admin")
+	}
+	var list struct{ Users []map[string]any }
+	getJSON(t, a, ts.URL+"/api/admin/users", &list)
+	if len(list.Users) != 2 {
+		t.Fatalf("admin users = %d, want 2", len(list.Users))
+	}
+	var stats map[string]any
+	getJSON(t, a, ts.URL+"/api/admin/stats", &stats)
+	if int(stats["users"].(float64)) != 2 {
+		t.Fatalf("stats users = %v", stats["users"])
+	}
+}
+
+func TestReReportThrottleAndLocation(t *testing.T) {
+	ts, cn := newTestServer(t, func(c *config.Config) {
+		c.FinderMinInterval = time.Hour
+		c.FinderDailyCap = 6
+	})
+	owner := signIn(t, ts, cn, "owner@example.test")
+	var tag tagDTO
+	postJSONInto(t, owner, ts.URL+"/api/tags", `{"name":"bag"}`, &tag)
+
+	// Finder keeps a cookie jar so the finder key persists across submits.
+	jar, _ := cookiejar.New(nil)
+	finder := &http.Client{Jar: jar}
+	var pub foundPublicDTO
+	getJSON(t, finder, ts.URL+"/api/found/"+tag.GUID, &pub) // sets finder cookie + records a scan
+
+	before := len(cn.msgs)
+	postJSON(t, finder, ts.URL+"/api/found/"+tag.GUID,
+		`{"message":"found near the park","hasLocation":true,"lat":47.61,"lon":-122.33,"accuracy":12}`)
+	cn.waitFor(t, before+1)
+	report, _ := cn.last()
+	if !strings.Contains(report.Text, "Precise location") || !strings.Contains(report.Text, "google.com/maps") {
+		t.Fatalf("owner email missing precise location: %q", report.Text)
+	}
+
+	// An immediate second submit is throttled (within the 1h interval).
+	resp, err := finder.Post(ts.URL+"/api/found/"+tag.GUID, "application/json",
+		strings.NewReader(`{"message":"again"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second submit = %d, want 429", resp.StatusCode)
+	}
 }
 
 func TestFullFlow(t *testing.T) {

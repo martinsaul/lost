@@ -13,6 +13,9 @@ export default function Found() {
   const [sent, setSent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [loc, setLoc] = useState(null)        // { lat, lon, accuracy } once shared
+  const [locBusy, setLocBusy] = useState(false)
+  const [locMsg, setLocMsg] = useState('')
   const tokenRef = useRef('')
 
   useEffect(() => {
@@ -32,13 +35,32 @@ export default function Found() {
 
   function set(k, v) { setForm({ ...form, [k]: v }) }
 
+  function shareLocation() {
+    if (!navigator.geolocation) { setLocMsg('Location is not available in this browser.'); return }
+    setLocBusy(true); setLocMsg('')
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLoc({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy })
+        setLocMsg(`Location attached (±${Math.round(pos.coords.accuracy)}m). Thank you!`)
+        setLocBusy(false)
+      },
+      (err) => {
+        setLocMsg(err.code === 1 ? 'Location permission denied — no problem, it is optional.' : 'Could not get your location.')
+        setLocBusy(false)
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    )
+  }
+
   async function submit(e) {
     e.preventDefault()
     setError('')
     setBusy(true)
     try {
       const token = window.turnstile?.getResponse?.() || tokenRef.current || ''
-      await api.submitFound(guid, { ...form, token })
+      const payload = { ...form, token }
+      if (loc) { payload.hasLocation = true; payload.lat = loc.lat; payload.lon = loc.lon; payload.accuracy = loc.accuracy }
+      await api.submitFound(guid, payload)
       setSent(true)
     } catch (err) {
       setError(err.message || 'Could not send. Please try again.')
@@ -74,7 +96,11 @@ export default function Found() {
         )}
 
         {sent ? (
-          <div className="notice ok">Message sent — the owner has been notified. Thank you!</div>
+          <>
+            <div className="notice ok">Message sent — the owner has been notified. Thank you!</div>
+            <p className="tiny">Need to correct or add something? You can send one more update.</p>
+            <button className="secondary" onClick={() => { setSent(false); setError('') }}>Send an update</button>
+          </>
         ) : (
           <form onSubmit={submit}>
             <label htmlFor="msg">Message to the owner</label>
@@ -95,6 +121,23 @@ export default function Found() {
               </div>
             </div>
             <p className="tiny">Leave a way to reach you so the owner can reply and arrange pickup.</p>
+
+            {/* Optional precise location to help the owner locate the item. */}
+            <div className="card" style={{ padding: 12, marginTop: 8, background: '#fafafa' }}>
+              {loc ? (
+                <div className="notice ok" style={{ margin: 0 }}>{locMsg}</div>
+              ) : (
+                <>
+                  <button type="button" className="secondary" onClick={shareLocation} disabled={locBusy}>
+                    {locBusy ? 'Getting location…' : '📍 Share my current location (optional)'}
+                  </button>
+                  <p className="tiny" style={{ marginBottom: 0 }}>
+                    Shares your device's GPS location with the owner to help arrange pickup. Optional.
+                  </p>
+                  {locMsg && <p className="tiny" style={{ color: '#b91c1c' }}>{locMsg}</p>}
+                </>
+              )}
+            </div>
 
             {/* Honeypot: hidden from humans, tempting to bots. */}
             <input type="text" name="website" tabIndex="-1" autoComplete="off"

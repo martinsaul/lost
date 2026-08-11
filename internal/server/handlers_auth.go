@@ -65,8 +65,12 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	user, err := s.store.UpsertUser(email)
+	user, err := s.store.UpsertUserWithCap(email, s.cfg.MaxUsers)
 	if err != nil {
+		if errors.Is(err, store.ErrUserCap) {
+			s.redirectAuthError(w, r, "registration is full")
+			return
+		}
 		s.redirectAuthError(w, r, "could not sign in")
 		return
 	}
@@ -93,7 +97,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "not signed in")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"email": u.Email})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"email":   u.Email,
+		"isAdmin": s.cfg.IsAdmin(u.Email),
+	})
 }
 
 func (s *Server) redirectAuthError(w http.ResponseWriter, r *http.Request, reason string) {

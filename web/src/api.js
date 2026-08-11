@@ -43,4 +43,7 @@ export const api = {
 
   getFound: (guid) => req('GET', `/api/found/${guid}`),
   submitFound: (guid, body) => req('POST', `/api/found/${guid}`, body),
+
+  adminStats: () => req('GET', '/api/admin/stats'),
+  adminUsers: () => req('GET', '/api/admin/users'),
 }
