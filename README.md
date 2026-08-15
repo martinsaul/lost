@@ -101,6 +101,25 @@ list. Highlights:
   share their device's precise location, which enriches the owner's notification
   with a map link. Nothing precise is collected without explicit consent.
 
+### Geolocation providers
+
+`LOST_GEO_PROVIDER` selects how an IP is resolved to an approximate location:
+
+- **`none`** (default) — no lookups; only the raw IP is stored.
+- **`ipapi`** — the hosted [ip-api.com](https://ip-api.com) service. Zero setup and
+  no key, but it **sends each visitor's IP to a third party** (free tier is
+  HTTP-only, rate-limited, non-commercial).
+- **`maxmind`** — a local **MaxMind GeoLite2 City** database, fully offline (no
+  third-party calls). Recommended for privacy. Setup:
+  1. Create a free MaxMind account and generate a license key.
+  2. Fetch `GeoLite2-City.mmdb` — e.g. with the official
+     [`geoipupdate`](https://github.com/maxmind/geoipupdate) tool (which can also
+     refresh it on a schedule).
+  3. Mount the file into the container and point at it:
+     `LOST_GEO_PROVIDER=maxmind`, `LOST_GEOIP_DB=/path/to/GeoLite2-City.mmdb`.
+
+  The database is ~60–70 MB and is memory-mapped (low RAM overhead).
+
 ### Notifiers
 
 - **smtp** — any SMTP server (host/port/user/pass/STARTTLS). Baseline.
