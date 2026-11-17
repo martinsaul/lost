@@ -23,6 +23,9 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data
+    labels:
+      # Built and deployed by CI (martin/ci-deploy), not pulled from a registry.
+      - "com.centurylinklabs.watchtower.enable=false"
 
   # Optional Postgres. Enable with: docker compose --profile postgres up -d
   # and set LOST_DB_URL=postgres://lost:lost@postgres:5432/lost?sslmode=disable

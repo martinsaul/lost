@@ -1,0 +1,25 @@
+stages: [test, deploy]
+
+include:
+  - project: martin/ci-deploy
+    ref: v4
+    file: templates/deploy.gitlab-ci.yml
+
+variables:
+  DEPLOY_PROJECT: lost
+  DEPLOY_BRANCH: master
+  DEPLOY_MANUAL: "1"
+
+# Mirrors the Dockerfile: build the SPA (it is go:embed'ed), then vet + test Go.
+test:
+  stage: test
+  image: golang:1.27.3-alpine
+  script:
+    - apk add --no-cache nodejs npm
+    - (cd web && npm ci --no-audit --no-fund && npm run build)
+    - go vet ./...
+    - go test ./...
+    - CGO_ENABLED=0 go build -trimpath -o /tmp/lost .
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
