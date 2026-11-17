@@ -10,9 +10,11 @@ import (
 	"errors"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,6 +28,14 @@ import (
 var embeddedSPA embed.FS
 
 func main() {
+	// `lost healthcheck` probes the local /healthz endpoint and exits 0/1. It is
+	// used by the Dockerfile HEALTHCHECK: the distroless runtime image has no
+	// shell, curl or wget, so the binary checks itself. It deliberately runs
+	// before config.Load so it needs no secrets.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck())
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
@@ -71,4 +81,34 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
+}
+
+// healthcheck GETs /healthz on the loopback interface, using the port from
+// LOST_ADDR (default :8080). Returns a process exit code.
+func healthcheck() int {
+	addr := os.Getenv("LOST_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		log.Printf("healthcheck: bad LOST_ADDR %q: %v", addr, err)
+		return 1
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	url := "http://" + net.JoinHostPort(strings.Trim(host, "[]"), port) + "/healthz"
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		log.Printf("healthcheck: %v", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("healthcheck: %s -> %d", url, resp.StatusCode)
+		return 1
+	}
+	return 0
 }

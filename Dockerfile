@@ -29,4 +29,7 @@ VOLUME ["/data"]
 ENV LOST_ADDR=":8080" \
     LOST_DB_URL="sqlite:///data/lost.db"
 EXPOSE 8080
+# Distroless has no shell/curl, so the binary probes its own /healthz.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["/app/lost", "healthcheck"]
 ENTRYPOINT ["/app/lost"]
